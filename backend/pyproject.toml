@@ -1,0 +1,19 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "RARecruit FastAPI backend"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.162.2",
+    "google-api-python-client>=2.201.0",
+    "google-auth>=2.62.1",
+    "pydantic-settings>=2.16.2",
+    "supabase>=2.34.1",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+]
