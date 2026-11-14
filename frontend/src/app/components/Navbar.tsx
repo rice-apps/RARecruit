@@ -25,7 +25,7 @@ export default function Navbar() {
     //   NextAuth:  await signOut({ callbackUrl: "/" });
     //   Supabase:  await supabase.auth.signOut();
     //   Own API:   await fetch("/api/logout", { method: "POST" });
-    window.location.href = "/";
+    window.location.href = "/auth/login";
   }
 
   return (
