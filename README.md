@@ -146,3 +146,8 @@ To learn more about our tech stack, please make use of the following:
  - [Next.js Docs](https://nextjs.org/docs)
  - [Learn Next.js](https://nextjs.org/learn)
  - [Tailwind Docs](https://tailwindcss.com/docs)
+
+
+## Updated ENV File
+
+For the application to work, please have the same variables as [.env.example](.env.example) in your .env file.
