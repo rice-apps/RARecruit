@@ -1,0 +1,46 @@
+{
+  "config": {
+    "slot_length_min": 30,
+    "interview_dates": ["2026-12-01", "2026-12-02"],
+    "timezone": "America/Chicago",
+    "daily_start_time": "07:00",
+    "daily_end_time": "18:00",
+    "interviewers_per_interview": 2,
+    "min_candidate_minutes": 60,
+    "min_interviewer_minutes": 0,
+    "max_interviews_per_interviewer": null,
+    "max_interviews_per_interviewer_per_day": null,
+    "phase": "solving"
+  },
+  "interviewers": [
+    { "id": "i1", "name": "Ana" },
+    { "id": "i2", "name": "Ben" },
+    { "id": "i3", "name": "Chi" },
+    { "id": "i4", "name": "Dee" },
+    { "id": "i5", "name": "Eli" }
+  ],
+  "candidates": [
+    { "id": "c1", "name": "Alex" },
+    { "id": "c2", "name": "Blair" },
+    { "id": "c3", "name": "Casey" },
+    { "id": "c4", "name": "Drew" }
+  ],
+  "availability": [
+    { "user_id": "i1", "start": "2026-12-01T14:00:00Z", "end": "2026-12-01T16:00:00Z" },
+    { "user_id": "i2", "start": "2026-12-01T14:00:00Z", "end": "2026-12-01T15:00:00Z" },
+    { "user_id": "i3", "start": "2026-12-01T15:00:00Z", "end": "2026-12-01T16:00:00Z" },
+    { "user_id": "i4", "start": "2026-12-01T14:30:00Z", "end": "2026-12-01T15:30:00Z" },
+    { "user_id": "i1", "start": "2026-12-02T13:00:00Z", "end": "2026-12-02T14:00:00Z" },
+    { "user_id": "i5", "start": "2026-12-02T13:30:00Z", "end": "2026-12-02T15:00:00Z" },
+
+    { "user_id": "c1", "start": "2026-12-01T14:00:00Z", "end": "2026-12-01T15:00:00Z" },
+    { "user_id": "c2", "start": "2026-12-01T14:30:00Z", "end": "2026-12-01T16:00:00Z" },
+    { "user_id": "c3", "start": "2026-12-01T14:00:00Z", "end": "2026-12-01T15:00:00Z" },
+    { "user_id": "c3", "start": "2026-12-02T13:00:00Z", "end": "2026-12-02T14:00:00Z" },
+    { "user_id": "c4", "start": "2026-12-01T15:00:00Z", "end": "2026-12-01T16:00:00Z" },
+    { "user_id": "c4", "start": "2026-12-02T13:00:00Z", "end": "2026-12-02T15:00:00Z" }
+  ],
+  "recusals": [
+    { "interviewer_id": "i2", "candidate_id": "c3", "reason": "former colleague" }
+  ]
+}
