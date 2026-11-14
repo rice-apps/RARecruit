@@ -1,0 +1,12 @@
+[
+  { "id": "a1", "name": "Avery", "email": "avery@example.com", "role": "admin" },
+  { "id": "i1", "name": "Ana", "email": "ana@example.com", "role": "interviewer" },
+  { "id": "i2", "name": "Ben", "email": "ben@example.com", "role": "interviewer" },
+  { "id": "i3", "name": "Chi", "email": "chi@example.com", "role": "interviewer" },
+  { "id": "i4", "name": "Dee", "email": "dee@example.com", "role": "interviewer" },
+  { "id": "i5", "name": "Eli", "email": "eli@example.com", "role": "interviewer" },
+  { "id": "c1", "name": "Alex", "email": "alex@example.com", "role": "candidate" },
+  { "id": "c2", "name": "Blair", "email": "blair@example.com", "role": "candidate" },
+  { "id": "c3", "name": "Casey", "email": "casey@example.com", "role": "candidate" },
+  { "id": "c4", "name": "Drew", "email": "drew@example.com", "role": "candidate" }
+]

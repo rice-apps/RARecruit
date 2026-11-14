@@ -1,0 +1,13 @@
+{
+  "slot_length_min": 30,
+  "interview_dates": ["2026-12-01", "2026-12-02"],
+  "timezone": "America/Chicago",
+  "daily_start_time": "07:00",
+  "daily_end_time": "18:00",
+  "interviewers_per_interview": 2,
+  "min_candidate_minutes": 60,
+  "min_interviewer_minutes": 0,
+  "max_interviews_per_interviewer": null,
+  "max_interviews_per_interviewer_per_day": null,
+  "phase": "solving"
+}
