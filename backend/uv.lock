@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -46,6 +46,7 @@ dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
     { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "supabase" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -62,6 +63,7 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.201.0" },
     { name = "google-auth", specifier = ">=2.62.1" },
     { name = "pydantic-settings", specifier = ">=2.16.2" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
     { name = "supabase", specifier = ">=2.34.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]

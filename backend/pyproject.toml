@@ -8,6 +8,7 @@ dependencies = [
     "google-api-python-client>=2.201.0",
     "google-auth>=2.62.1",
     "pydantic-settings>=2.16.2",
+    "pyjwt[crypto]>=2.15.1",
     "supabase>=2.34.1",
     "uvicorn[standard]>=0.54.0",
 ]
@@ -17,3 +18,9 @@ dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.4",
 ]
+
+[tool.pytest.ini_options]
+# Run from backend/: put backend/ on the import path so tests can `import app`,
+# and only collect tests from tests/.
+pythonpath = ["."]
+testpaths = ["tests"]

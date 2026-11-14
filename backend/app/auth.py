@@ -79,7 +79,8 @@ def verify_token(token: str) -> dict:
 
     Raises:
         HTTPException: 401 if the token is malformed, forged, expired, issued by
-            another project, or meant for another audience.
+            another project, or meant for another audience. 503 if Supabase's
+            public keys can't be fetched (our problem, not the user's token).
     """
     try:
         # Pick the public key matching the token's "kid" header.
@@ -93,9 +94,17 @@ def verify_token(token: str) -> dict:
             # Fail if these claims are missing, rather than silently accepting.
             options={"require": ["exp", "iat", "sub", "aud", "iss"]},
         )
+    except jwt.PyJWKClientConnectionError as exc:
+        # Network failure reaching Supabase. Must be caught BEFORE PyJWTError
+        # (it's a subclass). A 401 here would make the frontend think the
+        # user's session is bad and sign them out; 503 means "retry later".
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not verify sign-in right now, please try again",
+        ) from exc
     except jwt.PyJWTError as exc:
-        # Covers bad signatures, expiry, wrong iss/aud, and JWKS fetch failures
-        # (PyJWKClientError subclasses PyJWTError). Don't leak details to clients.
+        # Covers bad signatures, expiry, wrong iss/aud, unknown key IDs, and
+        # malformed tokens. Don't leak the exact reason to clients.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
