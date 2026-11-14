@@ -2,7 +2,10 @@
 
 from fastapi import FastAPI
 
+from app.routers.runs import router as runs_router
+
 app = FastAPI(title="RARecruit API")
+app.include_router(runs_router)
 
 
 @app.get("/health")

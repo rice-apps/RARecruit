@@ -158,10 +158,90 @@ The caller's identity and role come from the `X-User-Id` stub header (later: the
 | `POST` | `/schedule/runs` | admin | Run the solver; returns a draft run (`solving` only). |
 | `GET` | `/schedule/runs` | admin | List runs with summary stats. |
 | `GET` | `/schedule/runs/{id}` | admin | Run details: interviews, unscheduled candidates, loads. |
-| `POST` | `/schedule/runs/{id}/publish` | admin | Publish a run and move to `published`. |
-| `GET` | `/interviews/me` | interviewer, candidate | Own interviews from the published run. |
+| `POST` | `/schedule/runs/{id}/publish` | admin | Publish a run and move to `published`; returns notification results. |
+| `GET` | `/interviews/me` | interviewer, candidate | Own interviews from the published run, formatted in the configured timezone. |
 
 Errors: `403` for wrong role, `409` for a write in the wrong phase, `422` for invalid ranges or a submission below the role's minimum minutes.
+
+### Run review and publish response shapes
+
+`GET /schedule/runs` returns one summary per run:
+
+```json
+{
+  "id": "run-id",
+  "status": "draft",
+  "phase": "solving",
+  "timezone": "America/Chicago",
+  "created_at": "2026-12-01T00:00:00Z",
+  "scheduled_count": 3,
+  "unscheduled_count": 1,
+  "max_interviewer_load": 3
+}
+```
+
+`GET /schedule/runs/{id}` returns the interviews, named unscheduled candidates,
+per-interviewer loads, the current phase, and the configured timezone. Interview
+times remain UTC in this admin response; clients format them using `timezone`.
+
+`POST /schedule/runs/{id}/publish` returns:
+
+```json
+{
+  "run": { "...": "run detail response" },
+  "emails_sent": 0,
+  "emails_written": 3,
+  "emails_skipped": 0,
+  "email_failures": []
+}
+```
+
+Publishing is allowed only during `solving`. It is the source of truth: the run
+and config phase are persisted as published before notifications are attempted.
+Notification failures are reported in `email_failures` and do not undo
+publication. A second published run is rejected with `409`.
+
+`GET /interviews/me` returns a list of display records:
+
+```json
+{
+  "status": "scheduled",
+  "candidate_id": "c1",
+  "candidate_name": "Alex",
+  "start": "2026-12-01T09:00:00-06:00",
+  "end": "2026-12-01T09:30:00-06:00",
+  "timezone": "America/Chicago",
+  "panel": [{ "id": "i1", "name": "Ana" }],
+  "message": null
+}
+```
+
+Candidates receive only their own interview and panel names (never panel email
+addresses). Interviewers receive only interviews on their panels. Before a run
+is published the endpoint returns `[]`; a published but unscheduled candidate
+receives a `not_scheduled` record with a message.
+
+### Notification environment and safe testing
+
+The backend reads these server-only variables:
+
+| Variable | Purpose |
+|---|---|
+| `EMAIL_DRY_RUN` | Defaults to dry run when unset or invalid. Only the explicit value `false` enables Gmail sending. |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID. |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret. |
+| `GOOGLE_REFRESH_TOKEN` | Refresh token for the Gmail account. |
+| `GOOGLE_GMAIL_SCOPE` | Gmail scope; use `https://www.googleapis.com/auth/gmail.send`. |
+
+`GOOGLE_FORM_ID` is retained for the existing Google integration but is not
+needed for schedule notification delivery. In dry-run mode, one readable
+`.eml` file per recipient is written under `backend/data/outbox/`; that
+directory is ignored by Git. Unscheduled candidates receive no email.
+
+To test safely, leave `EMAIL_DRY_RUN` unset (or set it to `true`), publish a
+sample or test run, inspect the generated `.eml` files and the publish response,
+and verify that no Gmail API call occurs. Only after this check should a test
+account set `EMAIL_DRY_RUN=false` with the Gmail OAuth variables configured.
 
 ## 11. Architecture
 

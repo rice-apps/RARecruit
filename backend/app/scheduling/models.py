@@ -130,6 +130,41 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class Violation(_Model):
+    """A rule-check result for an admin edit or a draft run."""
+
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    severity: str = Field(pattern=r"^(error|warning)$")
+
+
+class Edit(_Model):
+    """Requested changes to one candidate's draft interview."""
+
+    candidate_id: str = Field(min_length=1)
+    start: UTCDateTime | None = None
+    end: UTCDateTime | None = None
+    interviewer_ids: list[str] | None = None
+    unschedule: bool = False
+
+    @model_validator(mode="after")
+    def _check(self) -> Edit:
+        if self.unschedule and any(value is not None for value in (self.start, self.end)):
+            raise ValueError("an unschedule edit cannot include start or end")
+        if (self.start is None) != (self.end is None):
+            raise ValueError("start and end must be provided together")
+        if self.start is not None and self.end is not None and self.end <= self.start:
+            raise ValueError("end must be after start")
+        if self.interviewer_ids is not None:
+            if not self.interviewer_ids:
+                raise ValueError("interviewer_ids cannot be empty")
+            if len(set(self.interviewer_ids)) != len(self.interviewer_ids):
+                raise ValueError("interviewer_ids must be unique")
+        if not self.unschedule and self.start is None and self.interviewer_ids is None:
+            raise ValueError("an edit must change the interview or unschedule the candidate")
+        return self
+
+
 # --------------------------------------------------------------------------- #
 # Models
 # --------------------------------------------------------------------------- #
@@ -498,7 +533,7 @@ class JsonRepository(Repository):
         raise NotFoundError(f"run {run_id!r} not found")
 
     def load_published_run(self) -> ScheduleRun | None:
-        return next((r for r in self.load_runs() if r.status == RunStus.PUBLISHED), None)
+        return next((r for r in self.load_runs() if r.status == RunStatus.PUBLISHED), None)
 
     def save_run(self, run: ScheduleRun) -> None:
         with self._lock:

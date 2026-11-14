@@ -14,6 +14,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+backend/data/outbox/
 
 # Node / Next.js (frontend)
 node_modules/

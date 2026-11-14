@@ -132,10 +132,16 @@ def list_runs() -> list[ScheduleRun]: ...
 def publish_run(run_id: str) -> ScheduleRun: ...
 
 # app/scheduling/notifications.py
-def notify(run: ScheduleRun, users: list[User]) -> None: ...
+def notify(run: ScheduleRun, users: list[User]) -> NotificationResult: ...
 ```
 
 **Uses:** `ScheduleRun` from the shared models; `load_inputs` from Person 1 for user names and emails.
+
+**Stable integration functions:** Person 1 and Person 2 may call
+`save_run`, `load_run`, `list_runs`, `publish_run`, and `notify` using these
+signatures. `list_runs` returns complete runs newest first; `publish_run`
+persists the published run and advances the config phase. `notify` returns
+counts for sent, dry-run-written, skipped, and failed recipient messages.
 
 **Dummy data:** a hand-written `data/sample_run.json` (a finished `ScheduleRun`), so this work doesn't wait for the solver. Users need `email` fields in the fixtures.
 

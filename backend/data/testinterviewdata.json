@@ -13,17 +13,17 @@
     "phase": "solving"
   },
   "interviewers": [
-    { "id": "i1", "name": "Ana" },
-    { "id": "i2", "name": "Ben" },
-    { "id": "i3", "name": "Chi" },
-    { "id": "i4", "name": "Dee" },
-    { "id": "i5", "name": "Eli" }
+    { "id": "i1", "name": "Ana", "email": "ana@example.com" },
+    { "id": "i2", "name": "Ben", "email": "ben@example.com" },
+    { "id": "i3", "name": "Chi", "email": "chi@example.com" },
+    { "id": "i4", "name": "Dee", "email": "dee@example.com" },
+    { "id": "i5", "name": "Eli", "email": "eli@example.com" }
   ],
   "candidates": [
-    { "id": "c1", "name": "Alex" },
-    { "id": "c2", "name": "Blair" },
-    { "id": "c3", "name": "Casey" },
-    { "id": "c4", "name": "Drew" }
+    { "id": "c1", "name": "Alex", "email": "alex@example.com" },
+    { "id": "c2", "name": "Blair", "email": "blair@example.com" },
+    { "id": "c3", "name": "Casey", "email": "casey@example.com" },
+    { "id": "c4", "name": "Drew", "email": "drew@example.com" }
   ],
   "availability": [
     { "user_id": "i1", "start": "2026-12-01T14:00:00Z", "end": "2026-12-01T16:00:00Z" },
