@@ -15,10 +15,10 @@ export type Interview = {
   name: string; // candidate name
   time: string; // ISO string, e.g. "2026-11-18T14:30:00"
   program: string;
-  role: string;
+  role: string; // role applied for, e.g. "Developer"
   gradingDocUrl: string; // Google Doc with the grading template for this interview
-  grade: number | null;
-  summary: string;
+  grade: number | null; // final score out of MAX_SCORE; null = not scored yet
+  summary: string; // interviewer's written summary; "" = not written yet
 };
 
 // Final interview scores are out of this many points.
@@ -28,6 +28,7 @@ export const MAX_SCORE = 30;
 const GRADING_TEMPLATE_URL =
   "https://docs.google.com/document/d/1gr1PcmfGwx87xqov1jLzSUXxaJ8MdE_UWs_cUNl1gck/edit?tab=t.0";
 
+// Mock data below. Will come from the backend.
 const interviewers: Interviewer[] = [
   { id: "mac", name: "Mac Ajwani" },
   { id: "alex", name: "Alex Chen" },
@@ -87,6 +88,7 @@ export async function getInterview(id: string, interviewerId: string): Promise<I
 }
 
 // Turns a normal Google Docs link into one that can go in an iframe.
+// e.g. ".../d/<id>/edit?tab=t.0" -> ".../d/<id>/preview"
 export function toEmbedUrl(docUrl: string): string {
   return docUrl.replace(/\/(edit|view)([?#].*)?$/, "/preview");
 }

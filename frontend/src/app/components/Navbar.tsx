@@ -1,8 +1,10 @@
 "use client";
+// Top nav for interviewer pages. Client Component because the mobile menu needs open/close state.
 
 import Link from "next/link";
 import { useState } from "react";
 
+// Nav items, used by both the desktop bar and the mobile dropdown.
 const links = [
   { href: "/interviewer", label: "Home" },
   { href: "/interviewer/availability", label: "Availability" },
@@ -11,6 +13,7 @@ const links = [
   { href: "/interviewer/interviews", label: "Interviews" }
 ];
 
+// Underline that grows in from the left on hover.
 const linkClass =
   "relative inline-block cursor-pointer transition-colors hover:text-neutral-900 " +
   "after:absolute after:-bottom-1 after:left-0 after:h-px after:w-full after:origin-left " +
@@ -18,7 +21,7 @@ const linkClass =
   "after:ease-out hover:after:scale-x-100";
 
 export default function Navbar() {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false); // mobile menu open?
 
   async function handleLogout() {
     // TODO: replace with your auth's logout call, e.g.
@@ -38,6 +41,7 @@ export default function Navbar() {
           &lt; RARecruit /&gt;
         </Link>
 
+        {/* Desktop links (hidden below md) */}
         <ul className="hidden items-center gap-14 text-base text-neutral-900/80 md:flex">
           {links.map((l) => (
             <li key={l.href}>
@@ -64,6 +68,7 @@ export default function Navbar() {
           onClick={() => setOpen(!open)}
           className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-[4px] border border-[rgba(15,0,0,0.12)] md:hidden"
         >
+          {/* Hamburger: three lines that turn into an X when open */}
           <span className="relative block h-4 w-4">
             <span className={`absolute left-0 block h-px w-4 bg-neutral-900 transition-all duration-300 ${open ? "top-1/2 rotate-45" : "top-1"}`} />
             <span className={`absolute left-0 top-1/2 block h-px w-4 bg-neutral-900 transition-opacity duration-200 ${open ? "opacity-0" : "opacity-100"}`} />
@@ -78,6 +83,7 @@ export default function Navbar() {
           <ul className="flex flex-col gap-4 text-base text-neutral-900/80">
             {links.map((l) => (
               <li key={l.href}>
+                {/* close the menu after picking a page */}
                 <Link href={l.href} onClick={() => setOpen(false)}>
                   {l.label}
                 </Link>

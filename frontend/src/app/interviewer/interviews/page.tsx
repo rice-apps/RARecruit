@@ -1,9 +1,10 @@
+// Interviews tab: the signed-in interviewer's own interviews, earliest first.
 import InterviewCard from "../../components/InterviewCard";
 import { getCurrentInterviewer, getInterviewsForInterviewer } from "@/lib/interviews";
 
 export default async function InterviewsPage() {
   const interviewer = await getCurrentInterviewer();
-  const interviews = await getInterviewsForInterviewer(interviewer.id);
+  const interviews = await getInterviewsForInterviewer(interviewer.id); // filtered to this interviewer + sorted
 
   return (
     <main className="mx-auto max-w-[1158px] space-y-8 px-6 pb-16 pt-6">
@@ -20,6 +21,7 @@ export default async function InterviewsPage() {
       {interviews.length === 0 ? (
         <p className="text-neutral-900/60">No interviews scheduled.</p>
       ) : (
+        // 1 / 2 / 3 columns depending on screen width; each card links to its detail page
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {interviews.map((i) => (
             <InterviewCard key={i.id} interview={i} />

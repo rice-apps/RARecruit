@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { MAX_SCORE, type Interview } from "@/lib/interviews";
 
+// One interview in the Interviews grid. The whole card is a link to its detail page.
 export default function InterviewCard({ interview }: { interview: Interview }) {
   const date = new Date(interview.time);
-  const graded = interview.grade !== null;
+  const graded = interview.grade !== null; // null = not scored yet
 
   return (
     <Link
@@ -18,6 +19,7 @@ export default function InterviewCard({ interview }: { interview: Interview }) {
         </span>
       </div>
 
+      {/* label/value rows */}
       <dl className="grid gap-2 text-sm">
         <div className="flex justify-between gap-4">
           <dt className="text-neutral-900/60">Program</dt>

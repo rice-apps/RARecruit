@@ -1,10 +1,13 @@
 "use client";
+// Availability page: a weekly grid of 30-min slots the interviewer clicks or drags to mark free time.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 // diagonal stripes for slots for dates in the past so they can't be edited
 const PAST_BG = "bg-[repeating-linear-gradient(135deg,#eef0f2_0px,#eef0f2_4px,#ffffff_4px,#ffffff_8px)]";
 
+// Indexed by Date.getDay() (0 = Sunday).
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// Grid shows 7 AM to 10 PM.
 const START_HOUR = 7;
 const END_HOUR = 22;
 
@@ -14,7 +17,9 @@ for (let m = START_HOUR * 60; m < END_HOUR * 60; m += 30) {
   TIMES.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
 }
 
+// Date helpers. A slot is stored as a string like "2026-11-21T09:30".
 const pad = (n: number) => String(n).padStart(2, "0");
+// Local date as "YYYY-MM-DD" (not toISOString, which would shift to UTC).
 const toKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const slotKey = (date: string, time: string) => `${date}T${time}`;
 
@@ -24,6 +29,7 @@ function addDays(d: Date, n: number) {
   return copy;
 }
 
+// Sunday 00:00 of the week containing d.
 function startOfWeek(d: Date) {
   const copy = new Date(d);
   copy.setHours(0, 0, 0, 0);
@@ -31,6 +37,7 @@ function startOfWeek(d: Date) {
   return copy;
 }
 
+// 13 -> "1 PM"
 function formatHour(h: number) {
   return `${h % 12 || 12} ${h >= 12 ? "PM" : "AM"}`;
 }
@@ -49,6 +56,7 @@ function mockSlots(): Set<string> {
   return s;
 }
 
+// Used with useSyncExternalStore below to tell server render vs. browser render apart.
 const noopSubscribe = () => () => {};
 
 export default function AvailabilityPage() {
@@ -67,9 +75,9 @@ export default function AvailabilityPage() {
 }
 
 function AvailabilityCalendar() {
-  const [slots, setSlots] = useState<Set<string>>(mockSlots);
-  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
-  const [saved, setSaved] = useState(true);
+  const [slots, setSlots] = useState<Set<string>>(mockSlots); // every available slot key, across all weeks
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date())); // week being viewed
+  const [saved, setSaved] = useState(true); // false once anything changes
 
   // drag-to-paint state: whether we're adding or removing slots like when2meet
   const dragMode = useRef<"add" | "remove" | null>(null);
@@ -78,6 +86,7 @@ function AvailabilityCalendar() {
   const thisWeek = startOfWeek(now);
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
 
+  // Slots before right now are locked.
   const isPast = (date: Date, time: string) => {
     const [h, m] = time.split(":").map(Number);
     const d = new Date(date);
@@ -85,16 +94,19 @@ function AvailabilityCalendar() {
     return d < now;
   };
 
+  // Stop painting when the mouse/finger is released anywhere on the page, not just on the grid.
   useEffect(() => {
     const end = () => (dragMode.current = null);
     window.addEventListener("pointerup", end);
     return () => window.removeEventListener("pointerup", end);
   }, []);
 
+  // Add or remove one slot, depending on the current drag mode.
   const paint = (key: string) => {
     if (!dragMode.current) return;
     setSlots((prev) => {
       const has = prev.has(key);
+      // already in the state we want: return prev unchanged so React skips a re-render
       if ((dragMode.current === "add") === has) return prev;
       const next = new Set(prev);
       if (dragMode.current === "add") next.add(key);
@@ -104,13 +116,15 @@ function AvailabilityCalendar() {
     setSaved(false);
   };
 
+  // Starting on an empty slot means "add" for the whole drag; starting on a filled one means "remove".
   const onPointerDown = (e: React.PointerEvent, key: string) => {
-    e.preventDefault();
+    e.preventDefault(); // stops text selection while dragging
     dragMode.current = slots.has(key) ? "remove" : "add";
     paint(key);
   };
 
-  // pointer move on the grid
+  // Pointer move on the grid. Uses elementFromPoint because on touch screens the
+  // events stay on the cell where the drag started; data-slot says which slot is under the finger.
   const onPointerMove = (e: React.PointerEvent) => {
     if (!dragMode.current) return;
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
@@ -118,6 +132,7 @@ function AvailabilityCalendar() {
     if (key) paint(key);
   };
 
+  // Runs fn for each day of the visible week on a copy of slots, then saves the copy.
   const updateWeek = (fn: (next: Set<string>, date: string) => void) => {
     setSlots((prev) => {
       const next = new Set(prev);
@@ -127,6 +142,7 @@ function AvailabilityCalendar() {
     setSaved(false);
   };
 
+  // Clear Week / Copy Last Week both leave past slots alone.
   const clearWeek = () =>
     updateWeek((next, date) => TIMES.forEach((t) => {
       if (!isPast(new Date(`${date}T00:00:00`), t)) next.delete(slotKey(date, t));
@@ -142,6 +158,7 @@ function AvailabilityCalendar() {
       });
     });
 
+  // Each slot is 30 min, so hours = slot count / 2.
   const hoursFor = (date: Date) =>
     TIMES.filter((t) => slots.has(slotKey(toKey(date), t))).length / 2;
   const weekHours = days.reduce((sum, d) => sum + hoursFor(d), 0);
@@ -179,6 +196,7 @@ function AvailabilityCalendar() {
       <section className="rounded-3xl border border-[rgba(15,0,0,0.12)] bg-white/95 p-4 shadow-[0_4px_24px_rgba(0,0,0,0.04)] sm:p-6">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
+            {/* can't go back before the current week */}
             <button
               onClick={() => setWeekStart(addDays(weekStart, -7))}
               disabled={weekStart <= thisWeek}
@@ -213,6 +231,7 @@ function AvailabilityCalendar() {
           </div>
         </div>
 
+        {/* Grid scrolls sideways on small screens. 1st column = time labels, then 7 day columns. */}
         <div className="overflow-x-auto rounded-xl border border-[rgba(15,0,0,0.12)]">
           <div
             className="grid min-w-[640px] select-none touch-none"
@@ -240,8 +259,9 @@ function AvailabilityCalendar() {
 
             {/* time rows */}
             {TIMES.map((t) => {
-              const onHour = t.endsWith(":00");
+              const onHour = t.endsWith(":00"); // darker line + label on the hour, lighter on the half hour
               return (
+                // `contents` drops this wrapper from the layout so its cells sit directly in the grid
                 <div key={t} className="contents">
                   <div className="relative pr-2 text-right font-(family-name:--font-pixel) text-[11px] text-neutral-400">
                     {onHour && <span className="absolute -top-2 right-2">{formatHour(Number(t.slice(0, 2)))}</span>}
@@ -253,6 +273,7 @@ function AvailabilityCalendar() {
                     return (
                       <div
                         key={key}
+                        // past slots get no data-slot / handler, so they can't be painted
                         data-slot={past ? undefined : key}
                         onPointerDown={past ? undefined : (e) => onPointerDown(e, key)}
                         title={past ? "This time has passed" : undefined}
@@ -269,6 +290,7 @@ function AvailabilityCalendar() {
           </div>
         </div>
 
+        {/* Legend */}
         <div className="mt-4 flex flex-wrap gap-5 text-sm text-neutral-500">
           <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-[#212529]" /> Available</span>
           <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-[rgba(15,0,0,0.2)] bg-white" /> Unavailable</span>
