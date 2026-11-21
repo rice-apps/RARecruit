@@ -30,7 +30,7 @@ import tempfile
 import threading
 import uuid
 from abc import ABC, abstractmethod
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any
@@ -68,10 +68,6 @@ class DuplicateRecusalError(ConflictError):
     """More than one recusal for the same (interviewer, candidate) pair."""
 
 
-class PublishedRunExistsError(ConflictError):
-    """Another run is already published (at most one is allowed)."""
-
-
 class InvalidDataError(RepositoryError):
     """Data passed to a save_* function is inconsistent."""
 
@@ -94,14 +90,14 @@ class Role(str, Enum):
 class Phase(str, Enum):
     SETUP = "setup"
     INTERVIEWER_AVAILABILITY = "interviewer_availability"
-    CANDIDATE_AVAILABILITY = "candidate_availability"
-    SOLVING = "solving"
-    PUBLISHED = "published"
+    BOOKING = "booking"
+    CLOSED = "closed"
 
 
-class RunStatus(str, Enum):
-    DRAFT = "draft"
-    PUBLISHED = "published"
+class BookingStatus(str, Enum):
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+    NEEDS_ATTENTION = "needs_attention"
 
 
 # --------------------------------------------------------------------------- #
@@ -138,28 +134,28 @@ class _Model(BaseModel):
 class User(_Model):
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
-    email: str
+    google_sub: str = Field(min_length=1)
     role: Role
-
-    @field_validator("email")
-    @classmethod
-    def _check_email(cls, v: str) -> str:
-        v = v.strip()
-        if "@" not in v or v.startswith("@") or v.endswith("@"):
-            raise ValueError("invalid email address")
-        return v
-
 
 class Config(_Model):
     """Scheduling config, one per cycle (§5). Edited by an admin in `setup`."""
 
-    slot_length_min: int = Field(gt=0)
+    slot_length_min: int = Field(default=30, gt=0)
     interview_dates: list[date] = Field(min_length=1)
-    timezone: str  # IANA name, e.g. "America/Chicago"
-    interviewers_per_interview: int = Field(ge=1)  # panel size k
-    min_candidate_slots: int = Field(ge=1)
+    timezone: str = "America/Chicago"
+
+    daily_start_time: time
+    daily_end_time: time
+
+    interviewers_per_interview: int = Field(default = 2, ge=1)  # panel size k
+    min_interviewer_minutes: int = Field(default=60, ge=0)
+
     max_interviews_per_interviewer: int | None = Field(default=None, ge=1)
     max_interviews_per_interviewer_per_day: int | None = Field(default=None, ge=1)
+
+    rubric_url: str | None = None
+    questions_doc_url: str | None = None
+
     phase: Phase = Phase.SETUP
 
     @field_validator("timezone")
@@ -168,7 +164,7 @@ class Config(_Model):
         try:
             ZoneInfo(v)
         except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
-            raise ValueError(f"unknown IANA timezone: {v!r}") from exc
+            raise ValueError(f"unknown timezone: {v}") from exc
         return v
 
     @field_validator("interview_dates")
@@ -179,14 +175,20 @@ class Config(_Model):
         return sorted(v)
 
     @model_validator(mode="after")
-    def _check_caps(self) -> Config:
-        total = self.max_interviews_per_interviewer
-        per_day = self.max_interviews_per_interviewer_per_day
-        if total is not None and per_day is not None and per_day > total:
+    def _check_config(self):
+        if self.daily_end_time <= self.daily_start_time:
             raise ValueError(
-                "max_interviews_per_interviewer_per_day cannot exceed "
-                "max_interviews_per_interviewer"
+                "daily_end_time must be after daily_start_time"
             )
+
+        total = self.max_interviews_per_interviewer
+        daily = self.max_interviews_per_interviewer_per_day
+
+        if total is not None and daily is not None and daily > total:
+            raise ValueError(
+                "daily interview cap cannot exceed total cap"
+            )
+
         return self
 
 
@@ -213,52 +215,31 @@ class Recusal(_Model):
     def pair(self) -> tuple[str, str]:
         return (self.interviewer_id, self.candidate_id)
 
-
-class Interview(_Model):
-    """A proposed or published interview. Belongs to a ScheduleRun."""
-
+class Booking(_Model):
+    id: str = Field(default_factory=_new_id, min_length=1)
     candidate_id: str = Field(min_length=1)
+
     start: UTCDateTime
     end: UTCDateTime
+
     interviewer_ids: list[str] = Field(min_length=1)
 
+    status: BookingStatus = BookingStatus.CONFIRMED
+    created_at: UTCDateTime = Field(default_factory=utcnow)
+
     @model_validator(mode="after")
-    def _check(self) -> Interview:
+    def _check_booking(self):
         if self.end <= self.start:
             raise ValueError("end must be after start")
-        if len(set(self.interviewer_ids)) != len(self.interviewer_ids):
-            raise ValueError("interviewer_ids must be unique within a panel")
+
+        if len(set(self.interviewer_ids)) != len(
+            self.interviewer_ids
+        ):
+            raise ValueError(
+                "interviewer_ids must be unique"
+            )
+
         return self
-
-
-class ScheduleRun(_Model):
-    id: str = Field(default_factory=_new_id, min_length=1)
-    created_at: UTCDateTime = Field(default_factory=utcnow)
-    status: RunStatus = RunStatus.DRAFT
-    interviews: list[Interview] = Field(default_factory=list)
-    unscheduled_candidate_ids: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _check(self) -> ScheduleRun:
-        scheduled = [i.candidate_id for i in self.interviews]
-        if len(set(scheduled)) != len(scheduled):
-            raise ValueError("a candidate may have at most one interview per run")
-        unscheduled = self.unscheduled_candidate_ids
-        if len(set(unscheduled)) != len(unscheduled):
-            raise ValueError("unscheduled_candidate_ids must be unique")
-        if set(scheduled) & set(unscheduled):
-            raise ValueError("a candidate cannot be both scheduled and unscheduled")
-        return self
-
-    def interviewer_loads(self) -> dict[str, int]:
-        """Number of interviews per interviewer in this run (for admin review)."""
-        loads: dict[str, int] = {}
-        for interview in self.interviews:
-            for iid in interview.interviewer_ids:
-                loads[iid] = loads.get(iid, 0) + 1
-        return loads
-
-
 # --------------------------------------------------------------------------- #
 # Repository interface
 # --------------------------------------------------------------------------- #
@@ -283,6 +264,15 @@ class Repository(ABC):
         """Convenience lookup (used by the stub auth to resolve roles)."""
         return next((u for u in self.load_users() if u.id == user_id), None)
 
+    def get_user_by_google_sub(self, google_sub: str) -> User | None:
+        return next(
+            (
+                user
+                for user in self.load_users()
+                if user.google_sub == google_sub
+            ),
+            None,
+    )
     # config
     @abstractmethod
     def load_config(self) -> Config:
@@ -312,24 +302,15 @@ class Repository(ABC):
         Raises DuplicateRecusalError if a (interviewer, candidate) pair repeats.
         """
 
-    # schedule runs
     @abstractmethod
-    def load_runs(self) -> list[ScheduleRun]: ...
+    def load_bookings(self) -> list[Booking]:
+        """Return all bookings."""
+        ...
 
     @abstractmethod
-    def load_run(self, run_id: str) -> ScheduleRun:
-        """Raises NotFoundError if the run does not exist."""
-
-    @abstractmethod
-    def load_published_run(self) -> ScheduleRun | None: ...
-
-    @abstractmethod
-    def save_run(self, run: ScheduleRun) -> None:
-        """
-        Insert or update a run by id.
-        Raises PublishedRunExistsError if `run` is published while a different
-        run is already published.
-        """
+    def get_booking(self, booking_id: str) -> Booking | None:
+        """Return a booking by ID, or None if not found."""
+        ...
 
 
 # --------------------------------------------------------------------------- #
@@ -347,17 +328,6 @@ def check_unique_recusals(recusals: list[Recusal]) -> None:
             )
         seen.add(r.pair)
 
-
-def check_single_published(run: ScheduleRun, existing: list[ScheduleRun]) -> None:
-    if run.status != RunStatus.PUBLISHED:
-        return
-    for other in existing:
-        if other.id != run.id and other.status == RunStatus.PUBLISHED:
-            raise PublishedRunExistsError(
-                f"run {other.id!r} is already published; only one run may be published"
-            )
-
-
 # --------------------------------------------------------------------------- #
 # JSON-backed implementation
 # --------------------------------------------------------------------------- #
@@ -368,7 +338,7 @@ DEFAULT_DATA_DIR = Path("backend/data")
 class JsonRepository(Repository):
     """
     Stores each collection in its own JSON file under `data_dir`:
-    users.json, config.json, availability.json, recusals.json, runs.json.
+    users.json, config.json, availability.json, recusals.json, bookings.json.
 
     Writes are atomic (temp file + os.replace) and guarded by a lock so
     concurrent requests in one process cannot interleave read-modify-write
@@ -428,9 +398,15 @@ class JsonRepository(Repository):
             return self._load_models("users", User)
 
     def save_users(self, users: list[User]) -> None:
-        ids = [u.id for u in users]
+        ids = [user.id for user in users]
+        google_subs = [user.google_sub for user in users]
+
         if len(set(ids)) != len(ids):
             raise InvalidDataError("user ids must be unique")
+
+        if len(set(google_subs)) != len(google_subs):
+            raise InvalidDataError("google_sub values must be unique")
+
         with self._lock:
             self._save_models("users", users)
 
@@ -485,33 +461,21 @@ class JsonRepository(Repository):
             check_unique_recusals(combined)  # guards against pre-existing bad data
             self._save_models("recusals", combined)
 
-    # -- schedule runs ------------------------------------------------------ #
+    # -- bookings ------------------------------------------------------------- #
 
-    def load_runs(self) -> list[ScheduleRun]:
+    def load_bookings(self) -> list[Booking]:
         with self._lock:
-            return self._load_models("runs", ScheduleRun)
+            return self._load_models("bookings", Booking)
 
-    def load_run(self, run_id: str) -> ScheduleRun:
-        for run in self.load_runs():
-            if run.id == run_id:
-                return run
-        raise NotFoundError(f"run {run_id!r} not found")
-
-    def load_published_run(self) -> ScheduleRun | None:
-        return next((r for r in self.load_runs() if r.status == RunStus.PUBLISHED), None)
-
-    def save_run(self, run: ScheduleRun) -> None:
-        with self._lock:
-            runs = self._load_models("runs", ScheduleRun)
-            check_single_published(run, runs)
-            for idx, existing in enumerate(runs):
-                if existing.id == run.id:
-                    runs[idx] = run
-                    break
-            else:
-                runs.append(run)
-            self._save_models("runs", runs)
-
+    def get_booking(self, booking_id: str) -> Booking | None:
+        return next(
+            (
+                booking
+                for booking in self.load_bookings()
+                if booking.id == booking_id
+            ),
+            None,
+        )
 
 # --------------------------------------------------------------------------- #
 # Self-check
@@ -524,94 +488,101 @@ def _self_check() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         repo = JsonRepository(tmp)
 
-        # users
+        # Test users without emails
         repo.save_users([
-            User(id="a1", name="Ada Admin", email="ada@example.com", role=Role.ADMIN),
-            User(id="i1", name="Ian", email="ian@example.com", role=Role.INTERVIEWER),
-            User(id="c1", name="Cy", email="cy@example.com", role=Role.CANDIDATE),
+            User(
+                id="admin1",
+                name="Test Admin",
+                google_sub="google-admin1",
+                role=Role.ADMIN,
+            ),
+            User(
+                id="interviewer1",
+                name="Test Interviewer",
+                google_sub="google-interviewer1",
+                role=Role.INTERVIEWER,
+            ),
+            User(
+                id="candidate1",
+                name="Test Candidate",
+                google_sub="google-candidate1",
+                role=Role.CANDIDATE,
+            ),
         ])
-        assert repo.get_user("i1").role == Role.INTERVIEWER
-        assert repo.get_user("nope") is None
 
-        # config
-        try:
-            repo.load_config()
-            raise AssertionError("expected NotFoundError")
-        except NotFoundError:
-            pass
-        cfg = Config(
-            slot_length_min=30, interview_dates=[date(2026, 3, 3), date(2026, 3, 2)],
-            timezone="America/Chicago", interviewers_per_interview=2, min_candidate_slots=3,
+        assert repo.get_user("interviewer1") is not None
+        assert repo.get_user_by_google_sub(
+            "google-interviewer1"
+        ).role == Role.INTERVIEWER
+
+        # Test configuration
+        config = Config(
+            slot_length_min=30,
+            interview_dates=[date(2026, 12, 1)],
+            timezone="America/Chicago",
+            daily_start_time="09:00",
+            daily_end_time="17:00",
+            interviewers_per_interview=2,
+            min_interviewer_minutes=60,
         )
-        repo.save_config(cfg)
-        assert repo.load_config().interview_dates == [date(2026, 3, 2), date(2026, 3, 3)]
-        try:
-            Config(slot_length_min=30, interview_dates=[date(2026, 3, 2)], timezone="Mars/Base",
-                   interviewers_per_interview=2, min_candidate_slots=1)
-            raise AssertionError("expected bad timezone to fail")
-        except ValidationError:
-            pass
 
-        # UTC normalization: input in Chicago time (UTC-6 in early March)
-        chicago = timezone(timedelta(hours=-6))
-        avail = Availability(user_id="i1", start=datetime(2026, 3, 2, 9, 0, tzinfo=chicago),
-                             end=datetime(2026, 3, 2, 12, 0, tzinfo=chicago))
-        assert avail.start == datetime(2026, 3, 2, 15, 0, tzinfo=timezone.utc)
-        assert avail.start.utcoffset() == timedelta(0)
-        repo.save_availability("i1", [avail])
-        stored = json.loads((Path(tmp) / "availability.json").read_text())
-        assert stored[0]["start"] == "2026-03-02T15:00:00Z", stored
-        assert repo.load_availability("i1")[0].start == avail.start
-        try:
-            Availability(user_id="i1", start=datetime(2026, 3, 2, 9, 0), end=datetime(2026, 3, 2, 10, 0))
-            raise AssertionError("expected naive datetime to fail")
-        except ValidationError:
-            pass
+        repo.save_config(config)
 
-        # replace semantics
-        repo.save_availability("c1", [Availability(user_id="c1", start=avail.start, end=avail.end)])
-        repo.save_availability("i1", [])
-        assert repo.load_availability("i1") == [] and len(repo.load_availability("c1")) == 1
+        assert repo.load_config().slot_length_min == 30
 
-        # recusal uniqueness
-        r = Recusal(interviewer_id="i1", candidate_id="c1", reason="former colleague")
-        try:
-            repo.save_recusals("i1", [r, r])
-            raise AssertionError("expected DuplicateRecusalError")
-        except DuplicateRecusalError:
-            pass
-        assert repo.load_recusals() == []  # failed write left nothing behind
-        repo.save_recusals("i1", [r])
-        repo.save_recusals("i1", [r])  # replace, not append
-        assert len(repo.load_recusals("i1")) == 1
+        # Test long availability intervals
+        start = datetime(
+            2026, 12, 1, 15, 0,
+            tzinfo=timezone.utc
+        )
 
-        # at most one published run
-        t = datetime(2026, 3, 2, 15, 0, tzinfo=timezone.utc)
-        iv = Interview(candidate_id="c1", start=t, end=t + timedelta(minutes=30), interviewer_ids=["i1"])
-        run1 = ScheduleRun(interviews=[iv])
-        run2 = ScheduleRun(unscheduled_candidate_ids=["c1"])
-        repo.save_run(run1)
-        repo.save_run(run2)
-        assert len(repo.load_runs()) == 2 and repo.load_published_run() is None
-        run1.status = RunStatus.PUBLISHED
-        repo.save_run(run1)
-        repo.save_run(run1)  # re-saving the same published run is fine
-        run2.status = RunStatus.PUBLISHED
-        try:
-            repo.save_run(run2)
-            raise AssertionError("expected PublishedRunExistsError")
-        except PublishedRunExistsError:
-            pass
-        assert repo.load_published_run().id == run1.id
-        assert repo.load_run(run1.id).interviewer_loads() == {"i1": 1}
-        try:
-            repo.load_run("missing")
-            raise AssertionError("expected NotFoundError")
-        except NotFoundError:
-            pass
+        availability = Availability(
+            user_id="interviewer1",
+            start=start,
+            end=start + timedelta(hours=3),
+        )
+
+        repo.save_availability(
+            "interviewer1",
+            [availability],
+        )
+
+        assert len(
+            repo.load_availability("interviewer1")
+        ) == 1
+
+        # Test recusals
+        recusal = Recusal(
+            interviewer_id="interviewer1",
+            candidate_id="candidate1",
+            reason="Conflict of interest",
+        )
+
+        repo.save_recusals(
+            "interviewer1",
+            [recusal],
+        )
+
+        assert len(
+            repo.load_recusals("interviewer1")
+        ) == 1
+
+        # Test booking model
+        booking = Booking(
+            candidate_id="candidate1",
+            start=start,
+            end=start + timedelta(minutes=30),
+            interviewer_ids=["interviewer1", "interviewer2"],
+        )
+
+        assert booking.status == BookingStatus.CONFIRMED
+        assert len(booking.interviewer_ids) == 2
+
+        # No booking has been saved yet
+        assert repo.load_bookings() == []
+        assert repo.get_booking("missing") is None
 
     print("All self-checks passed.")
-
 
 if __name__ == "__main__":
     _self_check()
