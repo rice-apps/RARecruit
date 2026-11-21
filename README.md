@@ -153,6 +153,8 @@ To learn more about our tech stack, please make use of the following:
  - [Tailwind Docs](https://tailwindcss.com/docs)
 
 
-## Updated ENV File
+## Updated Environment Files
 
-For the application to work, please have the same variables as [.env.example](.env.example) in your .env file.
+For the application to work, please have the same variables as 
+- [backend/.env.example](backend/.env.example) in your `backend/.env` 
+- [frontend/.env.example](frontend/.env.example) in your `frontend/env.local`
