@@ -46,6 +46,10 @@ cp backend/.env.example backend/.env
 ```
 Whenever you add a variable, add it to the matching `.env.example` too.
 
+### Database (Supabase)
+
+Use the **dev** Supabase project's keys (ask a TL). See [supabase/README.md](supabase/README.md) for the tables and how to access them.
+
 ## Startup
 
 Run both in separate terminals.
@@ -84,7 +88,8 @@ RARecruit/
 │   ├── pyproject.toml
 │   ├── uv.lock
 │   └── .env.example
-├── supabase/                # (planned)
+├── supabase/
+│   ├── README.md            # tables + how to access them
 │   ├── migrations/          # schema
 │   └── seed.sql             # fake data (dev only)
 ├── project/

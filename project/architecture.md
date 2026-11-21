@@ -17,7 +17,7 @@ flowchart TB
         Roles["<b>Auth & roles</b><br/>verify JWT, interviewer lookup"]
         subgraph Mods[" "]
             Config["<b>Config</b><br/>dates, slot lengths, roles, rubric"]
-            Sched["<b>Scheduling</b><br/>slots from availability, load balancing, bookings"]
+            Sched["<b>Scheduling</b><br/>availability, recusals, slot grid, self-reserve + load-balanced panels"]
             Intake["<b>Intake</b><br/>form import, reviewer assignment"]
             Grading["<b>Grading</b><br/>written app reviews, interview scores"]
             Stats["<b>Stats</b><br/>aggregates for written app + interview pages"]
@@ -81,4 +81,6 @@ flowchart TB
 - The frontend uses Supabase **only for sign-in**. Every data R/W is through FastAPI. FastAPI enforces candidate vs. interviewer access.
 - Candidates can only reach Scheduling.
 - The Supabase service-role key lives only in the backend.
-- Calendar invites are sent **only** by the backend , whenever a booking is created, changed or cancelled.
+- Calendar invites are sent **only** by the backend, whenever a booking is created, changed or cancelled.
+- Staff roles are `interviewer`, `board` and `admin`; anyone else is a candidate.
+- Scheduling is self-reserve. Schema: [supabase/README.md](../supabase/README.md).
