@@ -1,7 +1,12 @@
 {
-  "name": "frontend",
+  "name": "dev",
   "version": "0.1.0",
   "private": true,
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
