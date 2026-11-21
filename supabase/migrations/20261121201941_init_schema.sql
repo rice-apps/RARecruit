@@ -1,6 +1,6 @@
 -- =============================================================================
 -- RARecruit initial schema. Overview: supabase/README.md.
---   applicants -> applications -> reviews / interviews -> scores -> decisions
+--   applicants -> applications (incl. decision) -> reviews / interviews
 -- Only the backend (secret key) touches these tables; RLS is on with no
 -- policies. New tables MUST also `enable row level security`.
 -- =============================================================================
@@ -19,15 +19,19 @@ create type public.cycle_phase as enum ('setup', 'availability', 'booking', 'clo
 -- Which stage a rubric category is used in.
 create type public.rubric_stage as enum ('written', 'interview');
 
--- Where an application is in the funnel. "Decided" isn't a stage: a row in
--- `decisions` is the single source of truth for that.
+-- Position applied for. Only developers have a written app; PM/TL applications
+-- start at stage 'interview'.
+create type public.position_type as enum ('developer', 'pm', 'tl');
+
+-- Where an application is in the funnel. "Decided" isn't a stage:
+-- `applications.decision` being set is the single source of truth for that.
 create type public.application_stage as enum ('written', 'interview', 'withdrawn');
 
 create type public.decision_outcome as enum ('accept', 'reject');
 
 
 -- =============================================================================
--- Config: cycles, positions, form questions, rubric
+-- Config: cycles, rubric
 -- =============================================================================
 
 create table public.cycles (
@@ -36,8 +40,12 @@ create table public.cycles (
   is_active                              boolean not null default false,    -- the cycle the app shows
   phase                                  public.cycle_phase not null default 'setup',
 
-  -- Intake
+  -- Intake. `form_questions` lists the Google Form's questions in display order:
+  --   [{"google_question_id": "q_why", "title": "...", "show_in_review": true}, ...]
+  -- `applications.answers` is keyed by google_question_id. Name/email questions
+  -- aren't listed: those go to `applicants.full_name` / `applicants.email`.
   google_form_id                         text,                              -- form imported for this cycle
+  form_questions                         jsonb not null default '[]',
   applications_open_at                   timestamptz,
   applications_close_at                  timestamptz,
 
@@ -51,10 +59,11 @@ create table public.cycles (
   panel_size                             integer not null default 2,        -- interviewers per interview
   min_interviewer_minutes                integer not null default 0,        -- min availability per interviewer
 
-  -- Grading. Every rubric category is scored 0..rubric_max_score and counts
-  -- equally (no weights).
+  -- Grading. Written rubric categories and the interview score all use
+  -- 0..rubric_max_score; categories count equally (no weights).
   rubric_max_score                       integer not null default 5,
 
+  constraint cycles_form_questions_array  check (jsonb_typeof(form_questions) = 'array'),
   constraint cycles_slot_length_positive   check (slot_length_min > 0),
   constraint cycles_panel_size_positive    check (panel_size >= 1),
   constraint cycles_min_minutes_nonneg     check (min_interviewer_minutes >= 0),
@@ -70,50 +79,18 @@ comment on table public.cycles is
   'One recruiting cycle and all of its config: dates, slot length, panel size, rubric scale, phase.';
 
 
--- Positions people can apply for in a cycle: Developer, PM, TL.
--- PMs and TLs have NO written app: their applications skip written review and
--- start at stage 'interview' (has_written_app = false).
-create table public.positions (
-  id               uuid primary key default gen_random_uuid(),
-  cycle_id         uuid not null references public.cycles (id) on delete cascade,
-  name             text not null,
-  has_written_app  boolean not null default true,   -- false for PM / TL
-  sort_order       integer not null default 0,
-  unique (cycle_id, name)
-);
-
-comment on table public.positions is 'Positions in a cycle (Developer, PM, TL). PM/TL have no written app.';
-
-
--- Questions on the cycle's Google Form. `applications.answers` is keyed by
--- `google_question_id`. Name/email questions are NOT listed here: those go to
--- `applicants.full_name` / `applicants.email`.
-create table public.form_questions (
-  id                  uuid primary key default gen_random_uuid(),
-  cycle_id            uuid not null references public.cycles (id) on delete cascade,
-  google_question_id  text not null,
-  title               text not null,
-  sort_order          integer not null default 0,
-  show_in_review      boolean not null default true,   -- shown in the written-app review UI
-  unique (cycle_id, google_question_id)
-);
-
-comment on table public.form_questions is
-  'Google Form questions for a cycle, in display order. Keys for applications.answers.';
-
-
--- Rubric categories, for written review and for interviews. Shared by all
--- positions; all categories count equally on the cycle's 0..rubric_max_score scale.
+-- Rubric categories. Written ones are scored per category (review_scores);
+-- interview ones are guidance only (the panel gives one combined score).
 create table public.rubric_categories (
   id           uuid primary key default gen_random_uuid(),
   cycle_id     uuid not null references public.cycles (id) on delete cascade,
   stage        public.rubric_stage not null,
-  question_id  uuid references public.form_questions (id) on delete set null, -- written: shown beside this question
+  google_question_id  text,   -- written: shown beside this question (from cycles.form_questions)
   name         text not null,
   description  text not null default '',
   sort_order   integer not null default 0,
 
-  constraint rubric_question_only_written check (stage = 'written' or question_id is null)
+  constraint rubric_question_only_written check (stage = 'written' or google_question_id is null)
 );
 
 create index rubric_categories_cycle_idx on public.rubric_categories (cycle_id, stage);
@@ -174,21 +151,29 @@ create table public.applications (
   cycle_id            uuid not null references public.cycles (id) on delete restrict,
   -- cascade: deleting an applicant (e.g. a data-removal request) removes all their data.
   applicant_id        uuid not null references public.applicants (id) on delete cascade,
-  position_id         uuid not null references public.positions (id) on delete restrict,
+  position            public.position_type not null,
   stage               public.application_stage not null default 'written',
   google_response_id  text unique,                       -- dedupes re-imports
   submitted_at        timestamptz not null default now(),
   answers             jsonb not null default '{}',       -- { google_question_id: answer }
 
+  -- Final decision (null = undecided).
+  decision            public.decision_outcome,
+  decided_by          uuid references public.interviewers (id) on delete restrict,
+  decided_at          timestamptz,
+  decision_notes      text not null default '',
+
   unique (cycle_id, applicant_id),
-  constraint applications_answers_object check (jsonb_typeof(answers) = 'object')
+  constraint applications_answers_object  check (jsonb_typeof(answers) = 'object'),
+  -- PM/TL have no written app, so they can never sit in the written stage.
+  constraint applications_written_only_dev check (stage <> 'written' or position = 'developer'),
+  constraint applications_decided_at_set  check ((decision is null) = (decided_at is null))
 );
 
 create index applications_applicant_idx on public.applications (applicant_id);
-create index applications_position_idx  on public.applications (position_id);
 
 comment on table public.applications is
-  'An applicant''s form response for one cycle. stage = interview means they may book a slot; decided = has a decisions row. PM/TL start at interview.';
+  'An applicant''s form response for one cycle. stage = interview means they may book a slot; decided = decision is set. PM/TL start at interview.';
 
 
 -- A reviewer assigned to an application (Developer apps only; PM/TL have no
@@ -260,33 +245,25 @@ create index recusals_applicant_idx on public.recusals (applicant_id);
 comment on table public.recusals is 'Conflicts of interest between an interviewer and an applicant.';
 
 
--- Slot grid, generated by the backend. A time, not a seat: several candidates
--- can book the same slot with different panels.
-create table public.slots (
-  id          uuid primary key default gen_random_uuid(),
-  cycle_id    uuid not null references public.cycles (id) on delete cascade,
-  start_at    timestamptz not null,
-  end_at      timestamptz not null,
-
-  unique (cycle_id, start_at),
-  constraint slots_range_order check (end_at > start_at)
-);
-
-comment on table public.slots is 'Fixed-length interview slots for a cycle (UTC), generated by the backend.';
-
-
--- A booked interview. Cancelled rows are kept for history (cancelled_at set);
--- an interview is active while cancelled_at is null.
+-- A booked interview. There is no slots table: the backend computes the slot
+-- grid from the cycle config, and `start_at` must be a grid time (the backend
+-- checks this). Cancelled rows are kept for history; active = cancelled_at null.
+-- `score` + `comment` are the panel's ONE combined result for the interview.
 create table public.interviews (
   id              uuid primary key default gen_random_uuid(),
   application_id  uuid not null references public.applications (id) on delete cascade,
-  slot_id         uuid not null references public.slots (id) on delete restrict,
+  start_at        timestamptz not null,
+  end_at          timestamptz not null,
   gcal_event_id   text unique,          -- Google Calendar event, set after the invite is sent
   booked_at       timestamptz not null default now(),
   cancelled_at    timestamptz,          -- null = active
+  score           numeric(5, 2),        -- panel's combined score, 0..cycles.rubric_max_score
+  comment         text not null default '',
 
-  -- Target for interview_panelists' composite FK (keeps panelists.slot_id in sync).
-  unique (id, slot_id)
+  -- Target for interview_panelists' composite FK (keeps panelists.start_at in sync).
+  unique (id, start_at),
+  constraint interviews_range_order check (end_at > start_at),
+  constraint interviews_score_nonneg check (score >= 0)
 );
 
 -- A candidate holds at most one active interview per application.
@@ -294,84 +271,47 @@ create unique index interviews_one_active_per_application
   on public.interviews (application_id)
   where cancelled_at is null;
 
-create index interviews_slot_idx on public.interviews (slot_id);
-
 comment on table public.interviews is 'Booked interviews. Write via book_interview() / cancel_interview().';
 
 
--- Panel for an interview + each panelist's overall `comment`. `slot_id` is
--- copied from the interview so unique (interviewer_id, slot_id) blocks
--- double-booking. Rows are removed on cancel, freeing the interviewer.
+-- Panel for an interview. `start_at` is copied from the interview so
+-- unique (interviewer_id, start_at) blocks double-booking. Rows are removed on
+-- cancel, freeing the interviewer.
 create table public.interview_panelists (
   interview_id    uuid not null,
   interviewer_id  uuid not null references public.interviewers (id) on delete restrict,
-  slot_id         uuid not null,
-  comment         text not null default '',   -- panelist's overall summary of the interview
+  start_at        timestamptz not null,
 
   primary key (interview_id, interviewer_id),
-  unique (interviewer_id, slot_id),     -- no double-booking
-  foreign key (interview_id, slot_id)
-    references public.interviews (id, slot_id) on update cascade on delete cascade
+  unique (interviewer_id, start_at),    -- no double-booking
+  foreign key (interview_id, start_at)
+    references public.interviews (id, start_at) on update cascade on delete cascade
 );
 
-comment on table public.interview_panelists is 'Interviewers on each interview. Unique per (interviewer, slot).';
+comment on table public.interview_panelists is 'Interviewers on each interview. Unique per (interviewer, start time).';
 
 
--- One score per (interview, panelist, rubric category). The composite FK means
--- only panelists can score, and a scored panelist can't be swapped out.
-create table public.interview_scores (
-  interview_id        uuid not null references public.interviews (id) on delete cascade,
-  interviewer_id      uuid not null,
-  rubric_category_id  uuid not null references public.rubric_categories (id) on delete restrict,
-  score               numeric(5, 2) not null,
-
-  primary key (interview_id, interviewer_id, rubric_category_id),
-  -- NO ACTION (checked at end of statement): deleting a whole interview cascades
-  -- through both FKs fine, but deleting just a scored panelist fails.
-  foreign key (interview_id, interviewer_id)
-    references public.interview_panelists (interview_id, interviewer_id),
-  constraint interview_scores_nonneg check (score >= 0)
-);
-
-create index interview_scores_category_idx on public.interview_scores (rubric_category_id);
-
-comment on table public.interview_scores is 'Structured interview scores, per panelist and rubric category.';
-
-
--- =============================================================================
--- Decisions
--- =============================================================================
-
-create table public.decisions (
-  application_id  uuid primary key references public.applications (id) on delete cascade,
-  outcome         public.decision_outcome not null,
-  decided_by      uuid references public.interviewers (id) on delete restrict,
-  notes           text not null default '',
-  decided_at      timestamptz not null default now()
-);
-
-comment on table public.decisions is 'Final accept / reject per application.';
 
 
 -- =============================================================================
 -- Booking RPCs: supabase-py can't run transactions, so these write an interview
 -- and its whole panel all-or-nothing. The backend picks the panel; on a race,
--- unique (interviewer_id, slot_id) raises 23505 and the backend retries.
+-- unique (interviewer_id, start_at) raises 23505 and the backend retries.
 -- =============================================================================
 
 -- Book a new interview, or move an existing active one (reschedule).
 --
 -- Params:
 --   p_application_id  application the interview is for
---   p_slot_id         slot to book
+--   p_start_at        slot start (a grid time; end = start + cycles.slot_length_min)
 --   p_interviewer_ids the panel; must be exactly cycles.panel_size distinct ids
 --   p_interview_id    null = new booking; otherwise the active interview to move
 -- Returns: the interview id.
--- Errors:  P0002 not found, 22023 bad panel / wrong cycle, 23505 interviewer
---          already booked in that slot or application already has an interview.
+-- Errors:  P0002 not found / not movable, 22023 bad panel, 23505 interviewer
+--          already booked at that time or application already has an interview.
 create function public.book_interview(
   p_application_id  uuid,
-  p_slot_id         uuid,
+  p_start_at        timestamptz,
   p_interviewer_ids uuid[],
   p_interview_id    uuid default null
 )
@@ -381,29 +321,17 @@ set search_path = ''
 as $$
 declare
   v_panel_size    integer;
-  v_slot_cycle    uuid;
-  v_app_cycle     uuid;
+  v_slot_length   integer;
   v_interview_id  uuid;
 begin
-  -- Look up the slot's cycle and that cycle's panel size.
-  select s.cycle_id, c.panel_size
-    into v_slot_cycle, v_panel_size
-    from public.slots s
-    join public.cycles c on c.id = s.cycle_id
-   where s.id = p_slot_id;
-  if v_slot_cycle is null then
-    raise exception 'slot % not found', p_slot_id using errcode = 'P0002';
-  end if;
-
-  -- The slot must belong to the application's cycle.
-  select a.cycle_id into v_app_cycle
+  -- Panel size and slot length come from the application's cycle.
+  select c.panel_size, c.slot_length_min
+    into v_panel_size, v_slot_length
     from public.applications a
+    join public.cycles c on c.id = a.cycle_id
    where a.id = p_application_id;
-  if v_app_cycle is null then
+  if v_panel_size is null then
     raise exception 'application % not found', p_application_id using errcode = 'P0002';
-  end if;
-  if v_app_cycle <> v_slot_cycle then
-    raise exception 'slot % is not in the application''s cycle', p_slot_id using errcode = '22023';
   end if;
 
   -- Panel must be exactly panel_size distinct interviewers.
@@ -414,44 +342,46 @@ begin
 
   if p_interview_id is null then
     -- New booking.
-    insert into public.interviews (application_id, slot_id)
-    values (p_application_id, p_slot_id)
+    insert into public.interviews (application_id, start_at, end_at)
+    values (p_application_id, p_start_at, p_start_at + make_interval(mins => v_slot_length))
     returning id into v_interview_id;
   else
-    -- Reschedule: drop the old panel, then move the interview. (Fails if any
-    -- panelist already has scores, via interview_scores' FK.)
+    -- Reschedule: drop the old panel, then move the interview. Only an active,
+    -- not-yet-scored interview can move.
     delete from public.interview_panelists where interview_id = p_interview_id;
 
     update public.interviews
-       set slot_id = p_slot_id
+       set start_at = p_start_at,
+           end_at   = p_start_at + make_interval(mins => v_slot_length)
      where id = p_interview_id
        and application_id = p_application_id
        and cancelled_at is null
+       and score is null
     returning id into v_interview_id;
 
     if v_interview_id is null then
-      raise exception 'active interview % not found for this application', p_interview_id
+      raise exception 'active, unscored interview % not found for this application', p_interview_id
         using errcode = 'P0002';
     end if;
   end if;
 
   -- Write the panel in one statement.
-  insert into public.interview_panelists (interview_id, interviewer_id, slot_id)
-  select v_interview_id, x, p_slot_id
+  insert into public.interview_panelists (interview_id, interviewer_id, start_at)
+  select v_interview_id, x, p_start_at
     from unnest(p_interviewer_ids) as x;
 
   return v_interview_id;
 end;
 $$;
 
-comment on function public.book_interview(uuid, uuid, uuid[], uuid) is
+comment on function public.book_interview(uuid, timestamptz, uuid[], uuid) is
   'Atomically book or reschedule an interview with its panel. Backend-only (service role).';
 
 
 -- Cancel an active interview and free its panel's slot.
 --
 -- Params:  p_interview_id  the interview to cancel
--- Errors:  P0002 if it doesn't exist or is already cancelled.
+-- Errors:  P0002 if it doesn't exist, is already cancelled, or has a score.
 create function public.cancel_interview(p_interview_id uuid)
 returns void
 language plpgsql
@@ -461,10 +391,11 @@ begin
   update public.interviews
      set cancelled_at = now()
    where id = p_interview_id
-     and cancelled_at is null;
+     and cancelled_at is null
+     and score is null;
 
   if not found then
-    raise exception 'active interview % not found', p_interview_id using errcode = 'P0002';
+    raise exception 'active, unscored interview % not found', p_interview_id using errcode = 'P0002';
   end if;
 
   -- Free the interviewers for that slot.
@@ -482,8 +413,6 @@ comment on function public.cancel_interview(uuid) is
 -- =============================================================================
 
 alter table public.cycles              enable row level security;
-alter table public.positions           enable row level security;
-alter table public.form_questions      enable row level security;
 alter table public.rubric_categories   enable row level security;
 alter table public.interviewers        enable row level security;
 alter table public.applicants          enable row level security;
@@ -492,11 +421,8 @@ alter table public.reviews             enable row level security;
 alter table public.review_scores       enable row level security;
 alter table public.availability        enable row level security;
 alter table public.recusals            enable row level security;
-alter table public.slots               enable row level security;
 alter table public.interviews          enable row level security;
 alter table public.interview_panelists enable row level security;
-alter table public.interview_scores    enable row level security;
-alter table public.decisions           enable row level security;
 
 -- Tables: backend only.
 revoke all on all tables in schema public from anon, authenticated;
@@ -504,7 +430,7 @@ grant select, insert, update, delete on all tables in schema public to service_r
 
 -- Functions: functions are executable by PUBLIC by default; lock them down.
 revoke execute on all functions in schema public from public, anon, authenticated;
-grant execute on function public.book_interview(uuid, uuid, uuid[], uuid) to service_role;
+grant execute on function public.book_interview(uuid, timestamptz, uuid[], uuid) to service_role;
 grant execute on function public.cancel_interview(uuid) to service_role;
 
 -- Future objects created by migrations (run as `postgres`) start locked too.

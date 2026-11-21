@@ -12,22 +12,17 @@ Your `.env` points at the **dev** project, which has fake data. TLs own the sche
 
 | Table | Notes |
 |---|---|
-| `cycles` | Config for one cycle: dates, timezone, slot length, `panel_size`, `rubric_max_score`, `phase` (`setup → availability → booking → closed`). One has `is_active = true`. |
-| `positions` | Developer, PM, TL. PM/TL have `has_written_app = false` and start at stage `interview`. |
-| `form_questions` | Google Form questions; keys for `applications.answers`. |
-| `rubric_categories` | `written` or `interview`. All categories are equal and scored `0..rubric_max_score`. |
+| `cycles` | Config for one cycle: dates, timezone, slot length, `panel_size`, `rubric_max_score`, `phase` (`setup → availability → booking → closed`). One has `is_active = true`. The slot grid is computed from this; it isn't stored. `form_questions` = the Google Form's questions in order (`[{google_question_id, title, show_in_review}]`), keys for `applications.answers`. |
+| `rubric_categories` | `written` categories are scored per category, `0..rubric_max_score`, all equal, and can point at a question (`google_question_id`). `interview` categories are guidance only. |
 | `interviewers` | Staff: `interviewer` / `board` / `admin`. Not listed = candidate. |
 | `applicants` | Name, email, consent. |
-| `applications` | One per applicant per cycle. `stage` = `written / interview / withdrawn`; decided = has a `decisions` row. |
+| `applications` | One per applicant per cycle. `position` = `developer / pm / tl` (only developers have a written app, so PM/TL start at `interview`). `stage` = `written / interview / withdrawn`. Decision: `decision` (`accept / reject`, null = undecided), `decided_by`, `decided_at`, `decision_notes`. |
 | `reviews` | Reviewer assignment, overall `comment`, `submitted_at` (null = not submitted). |
 | `review_scores` | Score per (review, category). |
 | `availability` | Interviewer time ranges (UTC). |
 | `recusals` | (interviewer, applicant) conflict of interest. |
-| `slots` | Slot grid. A time, not a seat: several interviews can share a slot. |
-| `interviews` | One active interview per application. `cancelled_at` null = active. |
-| `interview_panelists` | Panel plus each panelist's overall `comment`. An interviewer can't be in two interviews in the same slot. |
-| `interview_scores` | Score per (interview, panelist, category). Only panelists can score. |
-| `decisions` | Accept / reject. |
+| `interviews` | `start_at` / `end_at`, plus the panel's **one** combined `score` and `comment`. One active interview per application; `cancelled_at` null = active. Several interviews can share a start time. |
+| `interview_panelists` | Panel. An interviewer can't be in two interviews at the same start time. |
 
 ## Booking interviews
 
@@ -36,7 +31,7 @@ Don't insert into `interviews` or `interview_panelists` directly. Use these two 
 ```python
 supabase.rpc("book_interview", {
     "p_application_id": app_id,
-    "p_slot_id": slot_id,
+    "p_start_at": start_at,          # a grid time from the cycle config
     "p_interviewer_ids": [i1, i2],   # exactly cycles.panel_size
     "p_interview_id": None,          # an existing id = reschedule
 }).execute()
@@ -44,4 +39,4 @@ supabase.rpc("book_interview", {
 supabase.rpc("cancel_interview", {"p_interview_id": interview_id}).execute()
 ```
 
-If `book_interview` fails with error `23505`, an interviewer was just taken by another booking, or the application already has an interview. Pick another panel and retry.
+If `book_interview` fails with error `23505`, an interviewer was just taken by another booking, or the application already has an interview. Pick another panel and retry. Once an interview has a `score`, it can't be rescheduled or cancelled.
