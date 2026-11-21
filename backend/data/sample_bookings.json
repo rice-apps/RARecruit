@@ -1,0 +1,44 @@
+{
+  "timezone": "America/Chicago",
+  "config": {
+    "slot_length_min": 30,
+    "interview_dates": ["2026-12-01", "2026-12-02"],
+    "timezone": "America/Chicago",
+    "interviewers_per_interview": 2,
+    "min_interviewer_minutes": 60,
+    "rubric_url": "https://example.com/interview-rubric",
+    "questions_doc_url": "https://example.com/interview-questions"
+  },
+  "users": [
+    {"id": "admin", "name": "Admin", "email": "admin@example.com", "role": "admin"},
+    {"id": "c1", "name": "Alex", "email": "alex@example.com", "role": "candidate"},
+    {"id": "c2", "name": "Blair", "email": "blair@example.com", "role": "candidate"},
+    {"id": "c3", "name": "Casey", "email": "casey@example.com", "role": "candidate"},
+    {"id": "c4", "name": "Drew", "email": "drew@example.com", "role": "candidate"},
+    {"id": "i1", "name": "Ana", "email": "ana@example.com", "role": "interviewer"},
+    {"id": "i2", "name": "Ben", "email": "ben@example.com", "role": "interviewer"},
+    {"id": "i3", "name": "Chi", "email": "chi@example.com", "role": "interviewer"}
+  ],
+  "bookings": [
+    {
+      "id": "booking-c1",
+      "candidate_id": "c1",
+      "start": "2026-12-01T15:00:00Z",
+      "end": "2026-12-01T15:30:00Z",
+      "interviewer_ids": ["i1", "i2"],
+      "status": "confirmed",
+      "created_at": "2026-11-21T14:00:00Z",
+      "location": null
+    },
+    {
+      "id": "booking-c2",
+      "candidate_id": "c2",
+      "start": "2026-12-01T16:00:00Z",
+      "end": "2026-12-01T16:30:00Z",
+      "interviewer_ids": ["i1", "i3"],
+      "status": "confirmed",
+      "created_at": "2026-11-21T14:05:00Z",
+      "location": null
+    }
+  ]
+}

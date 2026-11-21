@@ -1,4 +1,10 @@
-"""Candidate and interviewer publication notifications."""
+"""Booking-event notifications (Person 3).
+
+Contract for Person 2: call ``notify_booking_event(event)`` after a booking
+write has been persisted and outside the booking lock. This function never
+raises; every problem is reported in the returned ``NotificationResult`` so a
+notification failure can't roll back or 500 a successful booking.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,7 @@ import os
 import tempfile
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,20 +23,15 @@ from zoneinfo import ZoneInfo
 from google.auth.exceptions import RefreshError
 from googleapiclient.errors import HttpError
 
-from app.scheduling.models import (
-    Interview,
-    JsonRepository,
-    NotFoundError,
-    ScheduleRun,
-    User,
-)
+from app.scheduling.models import BookingEvent, BookingStatus, User
+from app.scheduling.outtake import config_value, load_context
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class NotificationResult:
-    """Outcome of attempting publication notifications."""
+    """Per-call delivery counts. ``written`` counts dry-run outbox files."""
 
     sent: int = 0
     written: int = 0
@@ -44,6 +46,18 @@ class _Recipient:
     body: str
 
 
+_CANDIDATE_SUBJECTS = {
+    "booked": "Your RARecruit interview is booked",
+    "cancelled": "Your RARecruit interview has been cancelled",
+    "rescheduled": "Your RARecruit interview has been rescheduled",
+}
+_INTERVIEWER_SUBJECTS = {
+    "booked": "A new RARecruit interview is assigned",
+    "cancelled": "An RARecruit interview assignment has been cancelled",
+    "rescheduled": "An RARecruit interview assignment has changed",
+}
+
+
 def _dry_run_enabled() -> bool:
     """Only an explicit, case-insensitive ``false`` enables live sending."""
     raw_value = os.getenv("EMAIL_DRY_RUN")
@@ -55,69 +69,70 @@ def _dry_run_enabled() -> bool:
 _dry_run_enabled()
 
 
-def _format_interview(
-    interview: Interview,
-    users_by_id: dict[str, User],
-    timezone: ZoneInfo,
-) -> str:
-    start = interview.start.astimezone(timezone)
-    end = interview.end.astimezone(timezone)
-    duration = int((interview.end - interview.start).total_seconds() // 60)
-    panel = ", ".join(
-        users_by_id[interviewer_id].name
-        for interviewer_id in interview.interviewer_ids
-        if interviewer_id in users_by_id
-    )
+def _when(start: datetime, end: datetime, timezone: ZoneInfo) -> str:
+    start, end = start.astimezone(timezone), end.astimezone(timezone)
     return (
         f"{start.strftime('%A, %B %-d, %Y')} from {start.strftime('%-I:%M %p')} "
-        f"to {end.strftime('%-I:%M %p %Z')} ({duration} minutes); "
-        f"panel: {panel or 'not available'}"
+        f"to {end.strftime('%-I:%M %p %Z')}"
     )
 
 
 def _recipients(
-    run: ScheduleRun,
-    users: list[User],
-    timezone: ZoneInfo,
+    event: BookingEvent, users: list[User], timezone: ZoneInfo
 ) -> list[_Recipient]:
+    booking = event.booking
     users_by_id = {user.id: user for user in users}
+    when = _when(booking.start, booking.end, timezone)
+    location = f"\nLocation: {booking.location}" if booking.location else ""
     recipients: list[_Recipient] = []
-    interviewer_interviews: dict[str, list[Interview]] = {}
 
-    for interview in run.interviews:
-        candidate = users_by_id.get(interview.candidate_id)
-        if candidate is not None:
-            recipients.append(
-                _Recipient(
-                    user=candidate,
-                    subject="Your RARecruit interview",
-                    body=(
-                        f"Hi {candidate.name},\n\n"
-                        "Your RARecruit interview is scheduled for:\n"
-                        f"{_format_interview(interview, users_by_id, timezone)}\n"
-                    ),
-                )
+    candidate = users_by_id.get(booking.candidate_id)
+    if candidate is not None:
+        subject = _CANDIDATE_SUBJECTS[event.event_type]
+        recipients.append(
+            _Recipient(
+                user=candidate,
+                subject=subject,
+                body=f"Hi {candidate.name},\n\n{subject}: {when}.{location}\n",
             )
-        for interviewer_id in interview.interviewer_ids:
-            interviewer_interviews.setdefault(interviewer_id, []).append(interview)
+        )
+    else:
+        logger.warning("Unknown candidate %s for booking %s", booking.candidate_id, booking.id)
 
-    for interviewer_id, interviews in interviewer_interviews.items():
+    candidate_name = candidate.name if candidate else booking.candidate_id
+    for interviewer_id in booking.interviewer_ids:
         interviewer = users_by_id.get(interviewer_id)
         if interviewer is None:
-            logger.warning("Skipping unknown interviewer %s for run %s", interviewer_id, run.id)
+            logger.warning("Unknown interviewer %s for booking %s", interviewer_id, booking.id)
             continue
-        details = "\n".join(
-            f"- {users_by_id[interview.candidate_id].name if interview.candidate_id in users_by_id else interview.candidate_id}: "
-            f"{_format_interview(interview, users_by_id, timezone)}"
-            for interview in interviews
-        )
+        subject = _INTERVIEWER_SUBJECTS[event.event_type]
         recipients.append(
             _Recipient(
                 user=interviewer,
-                subject="Your RARecruit interview assignments",
-                body=f"Hi {interviewer.name},\n\nYour interview assignments:\n{details}\n",
+                subject=subject,
+                body=f"Hi {interviewer.name},\n\n{subject}: {candidate_name}, {when}.{location}\n",
             )
         )
+
+    # Reschedule (spec §11 / work-split): interviewers dropped from the old
+    # panel get a cancellation for their old assignment.
+    previous = event.previous_booking
+    if event.event_type == "rescheduled" and previous is not None:
+        old_when = _when(previous.start, previous.end, timezone)
+        subject = _INTERVIEWER_SUBJECTS["cancelled"]
+        for interviewer_id in previous.interviewer_ids:
+            if interviewer_id in booking.interviewer_ids:
+                continue
+            interviewer = users_by_id.get(interviewer_id)
+            if interviewer is None:
+                continue
+            recipients.append(
+                _Recipient(
+                    user=interviewer,
+                    subject=subject,
+                    body=f"Hi {interviewer.name},\n\n{subject}: {candidate_name}, {old_when}.\n",
+                )
+            )
     return recipients
 
 
@@ -131,11 +146,7 @@ def _message(recipient: _Recipient) -> EmailMessage:
 
 def _write_marker(path: Path, delivered: set[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        dir=path.parent,
-        prefix=f".{path.stem}.",
-        suffix=".tmp",
-    )
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as marker:
             json.dump(sorted(delivered), marker, indent=2)
@@ -162,26 +173,17 @@ def _load_marker(path: Path) -> set[str]:
     return {value for value in values if isinstance(value, str)}
 
 
-def notify(run: ScheduleRun, users: list[User]) -> NotificationResult:
-    """Notify scheduled users; unscheduled candidates receive no email."""
-    result = NotificationResult()
-    try:
-        config = JsonRepository().load_config()
-        timezone = ZoneInfo(config.timezone)
-    except (NotFoundError, OSError, ValueError) as exc:
-        result.failures.append(f"could not load notification timezone: {exc}")
-        return result
-
+def _deliver(key: str, recipients: list[_Recipient], result: NotificationResult) -> None:
+    """Send (or dry-run write) once per recipient per ``key``; idempotent."""
     outbox = Path("backend/data/outbox")
-    marker_path = outbox / f"{run.id}.sent.json"
+    marker_path = outbox / f"{key}.sent.json"
     delivered = _load_marker(marker_path)
-    recipients = _recipients(run, users, timezone)
     pending: list[tuple[str, _Recipient, EmailMessage]] = []
     for recipient in recipients:
         if recipient.user.id in delivered:
             continue
         if not recipient.user.email:
-            logger.warning("Skipping user %s without an email for run %s", recipient.user.id, run.id)
+            logger.warning("Skipping user %s without an email for %s", recipient.user.id, key)
             result.skipped += 1
             continue
         pending.append((recipient.user.id, recipient, _message(recipient)))
@@ -190,14 +192,14 @@ def notify(run: ScheduleRun, users: list[User]) -> NotificationResult:
         for recipient_id, recipient, message in pending:
             try:
                 outbox.mkdir(parents=True, exist_ok=True)
-                path = outbox / f"{run.id}-{recipient_id}-{uuid.uuid4().hex}.eml"
+                path = outbox / f"{key}-{recipient_id}-{uuid.uuid4().hex}.eml"
                 path.write_bytes(message.as_bytes())
                 delivered.add(recipient_id)
                 _write_marker(marker_path, delivered)
                 result.written += 1
             except OSError as exc:
                 result.failures.append(f"{recipient.user.email}: {exc}")
-        return result
+        return
 
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
@@ -210,7 +212,7 @@ def notify(run: ScheduleRun, users: list[User]) -> NotificationResult:
             "GOOGLE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET "
             "are required when EMAIL_DRY_RUN is false"
         )
-        return result
+        return
     try:
         credentials = Credentials(
             token=None,
@@ -223,7 +225,7 @@ def notify(run: ScheduleRun, users: list[User]) -> NotificationResult:
         service = build("gmail", "v1", credentials=credentials)
     except (HttpError, OSError, RefreshError, RuntimeError, ValueError) as exc:
         result.failures.append(str(exc))
-        return result
+        return
 
     for recipient_id, recipient, message in pending:
         try:
@@ -234,7 +236,28 @@ def notify(run: ScheduleRun, users: list[User]) -> NotificationResult:
             result.sent += 1
         except (HttpError, OSError, RefreshError, RuntimeError, ValueError) as exc:
             result.failures.append(f"{recipient.user.email}: {exc}")
+
+
+def notify_booking_event(
+    event: BookingEvent, users: list[User] | None = None
+) -> NotificationResult:
+    """Notify the candidate and each panel interviewer about one booking event.
+
+    ``users`` is optional: Person 2 can pass just the event and names/emails
+    are read from Person 1's data. Never raises.
+    """
+    result = NotificationResult()
+    try:
+        if event.event_type == "booked" and event.booking.status != BookingStatus.CONFIRMED:
+            return result
+        context_users, config = load_context()
+        timezone = ZoneInfo(config_value(config, "timezone") or "UTC")
+        recipients = _recipients(event, users if users is not None else context_users, timezone)
+        _deliver(event.event_id, recipients, result)
+    except Exception as exc:  # noqa: BLE001 - must not break the booking path
+        logger.exception("Booking notification failed for event %s", event.event_id)
+        result.failures.append(f"notification error: {exc}")
     return result
 
 
-__all__ = ["NotificationResult", "notify"]
+__all__ = ["NotificationResult", "notify_booking_event"]

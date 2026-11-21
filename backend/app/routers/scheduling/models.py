@@ -1,8 +1,8 @@
 """Data models for the scheduling module.
 
-See backend/docs/scheudling-spec.md for how these fit together. Candidates and
-interviewers both submit availability ranges; the solver produces a
-ScheduleRun that assigns each candidate a slot and an interviewer panel.
+See backend/docs/scheduling-spec.md for how these fit together. Interviewers
+submit fixed availability slots and the booking system assigns candidates a
+panel at booking time.
 """
 
 from dataclasses import dataclass, field
@@ -47,19 +47,23 @@ class Config:
         interviewers_per_interview: Panel size for every interview.
         min_candidate_minutes: Minimum total availability a candidate must submit.
         min_interviewer_minutes: Minimum total availability an interviewer must submit.
+        rubric_url: Optional link to the interview rubric.
+        questions_doc_url: Optional link to the interviewer questions document.
         max_interviews_per_interviewer: Optional hard cap on total interviews per interviewer.
         max_interviews_per_interviewer_per_day: Optional hard cap per interviewer per day.
         phase: Current phase of the cycle.
     """
 
-    slot_length_min: int
-    interview_dates: list[date]
+    interview_dates: list[date] = field(default_factory=list)
+    slot_length_min: int = 30
     timezone: str = "America/Chicago"
     daily_start_time: time | None = None
     daily_end_time: time | None = None
     interviewers_per_interview: int = 2
     min_candidate_minutes: int = 60
     min_interviewer_minutes: int = 0
+    rubric_url: str | None = None
+    questions_doc_url: str | None = None
     max_interviews_per_interviewer: int | None = None
     max_interviews_per_interviewer_per_day: int | None = None
     phase: Phase = Phase.SETUP

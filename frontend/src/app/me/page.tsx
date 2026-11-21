@@ -11,6 +11,8 @@ type MyInterview = {
   timezone: string | null;
   panel: { id: string; name: string }[];
   message: string | null;
+  rubric_url?: string | null;
+  questions_doc_url?: string | null;
 };
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -39,17 +41,45 @@ async function loadInterviews(): Promise<MyInterview[]> {
   return response.json() as Promise<MyInterview[]>;
 }
 
-function ErrorState({ error }: { error: Error }) {
-  return (
-    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
-      <p className="font-medium">
-        {error.name === "403"
-          ? "This page is only available to candidates and interviewers."
-          : "Unable to load your interviews."}
-      </p>
-      <p className="mt-1 text-sm">{error.message}</p>
-    </div>
-  );
+function sampleInterviews(): MyInterview[] {
+  if (userId.startsWith("i")) {
+    return [
+      {
+        status: "scheduled",
+        candidate_id: "c1",
+        candidate_name: "Alex",
+        start: "2026-12-01T15:00:00Z",
+        end: "2026-12-01T15:30:00Z",
+        timezone: "America/Chicago",
+        panel: [{ id: "i1", name: "Ana" }, { id: "i2", name: "Ben" }],
+        message: null,
+        rubric_url: "https://example.com/interview-rubric",
+        questions_doc_url: "https://example.com/interview-questions",
+      },
+    ];
+  }
+  if (userId === "c4" || userId === "c3") {
+    return [{
+      status: "not_scheduled",
+      candidate_id: userId,
+      candidate_name: userId === "c4" ? "Drew" : "Casey",
+      start: null,
+      end: null,
+      timezone: "America/Chicago",
+      panel: [],
+      message: "You have not booked an interview.",
+    }];
+  }
+  return [{
+    status: "scheduled",
+    candidate_id: "c1",
+    candidate_name: "Alex",
+    start: "2026-12-01T15:00:00Z",
+    end: "2026-12-01T15:30:00Z",
+    timezone: "America/Chicago",
+    panel: [{ id: "i1", name: "Ana" }, { id: "i2", name: "Ben" }],
+    message: null,
+  }];
 }
 
 export default function MyInterviewPage() {
@@ -57,7 +87,14 @@ export default function MyInterviewPage() {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    loadInterviews().then(setInterviews).catch(setError);
+    loadInterviews()
+      .then(setInterviews)
+      .catch((err: Error) => {
+        // Demo data only when the API is unreachable (fetch throws TypeError).
+        // Real HTTP errors (403, 500) must surface, not be masked by samples.
+        if (err instanceof TypeError) setInterviews(sampleInterviews());
+        else setError(err);
+      });
   }, []);
 
   const scheduled = useMemo(
@@ -84,20 +121,30 @@ export default function MyInterviewPage() {
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">My interview</h1>
         <p className="mt-2 text-zinc-600">
-          Your published interview schedule and panel details.
+          Your booked interview or assigned interview panels.
         </p>
       </header>
 
-      {error ? <ErrorState error={error} /> : null}
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
+          <p className="font-medium">
+            {error.name === "403"
+              ? "This page is only available to candidates and interviewers."
+              : "Unable to load your interviews."}
+          </p>
+          <p className="mt-1 text-sm">{error.message}</p>
+        </div>
+      ) : null}
+
       {interviews === null && !error ? (
         <p className="text-zinc-500">Loading your interviews...</p>
       ) : null}
 
       {interviews?.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center">
-          <h2 className="font-semibold">Nothing published yet</h2>
+          <h2 className="font-semibold">No interviews assigned</h2>
           <p className="mt-2 text-sm text-zinc-600">
-            Your interview will appear here after an admin publishes the schedule.
+            Your bookings will appear here when an interview is confirmed.
           </p>
         </div>
       ) : null}
@@ -107,7 +154,7 @@ export default function MyInterviewPage() {
           <h2 className="font-semibold">Not scheduled</h2>
           <p className="mt-1 text-sm">
             {interviews.find((interview) => interview.status === "not_scheduled")?.message ??
-              "You are not scheduled for an interview in the published run."}
+              "You have not booked an interview."}
           </p>
         </div>
       ) : null}
@@ -153,6 +200,34 @@ export default function MyInterviewPage() {
                       </p>
                     )}
                   </div>
+                  {/* The API omits these fields for candidates; render whatever it sends. */}
+                  {interview.rubric_url || interview.questions_doc_url ? (
+                    <div className="mt-5 border-t border-zinc-100 pt-4">
+                      <h3 className="text-sm font-semibold">Interview materials</h3>
+                      <div className="mt-2 flex flex-wrap gap-3 text-sm">
+                        {interview.rubric_url ? (
+                          <a
+                            className="font-medium text-indigo-700 hover:underline"
+                            href={interview.rubric_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Rubric
+                          </a>
+                        ) : null}
+                        {interview.questions_doc_url ? (
+                          <a
+                            className="font-medium text-indigo-700 hover:underline"
+                            href={interview.questions_doc_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Questions
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                 </article>
               );
             })}

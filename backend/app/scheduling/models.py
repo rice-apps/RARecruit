@@ -33,7 +33,7 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
@@ -102,6 +102,11 @@ class Phase(str, Enum):
 class RunStatus(str, Enum):
     DRAFT = "draft"
     PUBLISHED = "published"
+
+
+class BookingStatus(str, Enum):
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
 
 
 # --------------------------------------------------------------------------- #
@@ -193,6 +198,9 @@ class Config(_Model):
     timezone: str  # IANA name, e.g. "America/Chicago"
     interviewers_per_interview: int = Field(ge=1)  # panel size k
     min_candidate_slots: int = Field(ge=1)
+    # Interviewer/admin-only links (spec §4); never returned to candidates.
+    rubric_url: str | None = None
+    questions_doc_url: str | None = None
     max_interviews_per_interviewer: int | None = Field(default=None, ge=1)
     max_interviews_per_interviewer_per_day: int | None = Field(default=None, ge=1)
     phase: Phase = Phase.SETUP
@@ -264,6 +272,36 @@ class Interview(_Model):
         if len(set(self.interviewer_ids)) != len(self.interviewer_ids):
             raise ValueError("interviewer_ids must be unique within a panel")
         return self
+
+
+class Booking(_Model):
+    """A confirmed or cancelled candidate interview booking."""
+
+    id: str = Field(default_factory=_new_id, min_length=1)
+    candidate_id: str = Field(min_length=1)
+    start: UTCDateTime
+    end: UTCDateTime
+    interviewer_ids: list[str] = Field(min_length=1)
+    status: BookingStatus = BookingStatus.CONFIRMED
+    created_at: UTCDateTime = Field(default_factory=utcnow)
+    location: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> Booking:
+        if self.end <= self.start:
+            raise ValueError("end must be after start")
+        if len(set(self.interviewer_ids)) != len(self.interviewer_ids):
+            raise ValueError("interviewer_ids must be unique within a panel")
+        return self
+
+
+class BookingEvent(_Model):
+    """A notification-safe description of a booking state change."""
+
+    event_id: str = Field(default_factory=_new_id, min_length=1)
+    event_type: Literal["booked", "cancelled", "rescheduled"] = "booked"
+    booking: Booking
+    previous_booking: Booking | None = None
 
 
 class ScheduleRun(_Model):
