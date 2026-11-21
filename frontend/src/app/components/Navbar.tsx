@@ -8,7 +8,9 @@ const links = [
   { href: "/interviewer/availability", label: "Availability" },
   { href: "/interviewer/applications", label: "Applications" },
   { href: "/interviewer/candidates", label: "Candidates" },
-  { href: "/interviewer/interviews", label: "Interviews" }
+  { href: "/interviewer/interviews", label: "Interviews" },
+  // TODO: only show this link to board members once the user's role is available.
+  { href: "/interviewer/applicants", label: "Applicants" }
 ];
 
 const linkClass =
