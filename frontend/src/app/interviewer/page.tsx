@@ -1,13 +1,5 @@
 import Link from "next/link";
-
-// mock logged-in interviewer. Replace with the real user once auth is set up.
-const interviewer = { name: "Mac Ajwani" };
-
-// mock data for upcoming interviews
-const upcoming = [
-  { id: "1", candidate: "Jane Doe", time: "Nov 10, 2:00 PM" },
-  { id: "2", candidate: "John Smith", time: "Nov 11, 10:30 AM" },
-];
+import { getCurrentInterviewer, getInterviewsForInterviewer } from "@/lib/interviews";
 
 // Pixel-font buttons with a hard offset shadow; they lift on hover and the arrow slides right.
 const baseButton =
@@ -28,7 +20,10 @@ function Arrow() {
   );
 }
 
-export default function InterviewerHome() {
+export default async function InterviewerHome() {
+  const interviewer = await getCurrentInterviewer();
+  const upcoming = await getInterviewsForInterviewer(interviewer.id);
+
   return (
     <main className="mx-auto max-w-[1158px] space-y-8 px-6 pb-16 pt-6">
       <div>
@@ -63,8 +58,14 @@ export default function InterviewerHome() {
                 href={`/interviewer/interviews/${i.id}`}
                 className="flex items-center justify-between px-4 py-3.5 transition-colors hover:bg-neutral-50"
               >
-                <span>{i.candidate}</span>
-                <span className="font-(family-name:--font-pixel) text-sm text-neutral-500">{i.time}</span>
+                <span>{i.name}</span>
+                <span className="font-(family-name:--font-pixel) text-sm text-neutral-500">{new Date(i.time).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
               </Link>
             </li>
           ))}

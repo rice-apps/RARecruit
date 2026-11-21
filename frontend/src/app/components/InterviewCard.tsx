@@ -1,16 +1,13 @@
-export type Interview = {
-  id: string;
-  name: string;
-  time: string; // ISO string, e.g. "2026-11-18T14:30:00"
-  program: string;
-  role: string;
-};
+import Link from "next/link";
+import { MAX_SCORE, type Interview } from "@/lib/interviews";
 
 export default function InterviewCard({ interview }: { interview: Interview }) {
   const date = new Date(interview.time);
+  const graded = interview.grade !== null;
 
   return (
-    <div
+    <Link
+      href={`/interviewer/interviews/${interview.id}`}
       className="flex flex-col gap-4 rounded-2xl border border-[rgba(15,0,0,0.12)] bg-white p-6 transition-shadow hover:shadow-md"
       style={{ boxShadow: "0px 5px 6.8px rgba(0,0,0,0.04)" }}
     >
@@ -38,7 +35,13 @@ export default function InterviewCard({ interview }: { interview: Interview }) {
             {date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
           </dd>
         </div>
+        <div className="flex justify-between gap-4">
+          <dt className="text-neutral-900/60">Score</dt>
+          <dd className={graded ? "text-neutral-900" : "text-neutral-900/60"}>
+            {graded ? `${interview.grade}/${MAX_SCORE}` : "Not graded"}
+          </dd>
+        </div>
       </dl>
-    </div>
+    </Link>
   );
 }
